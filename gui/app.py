@@ -801,6 +801,37 @@ class StegoApp(ctk.CTk):
         for w in self.det_scroll.winfo_children(): w.destroy()
         self.lbl_det.configure(text="Detected Targets (0)")
 
+    def _extract_raw_slots(self, image_path):
+        """
+        Extract the raw list of independently-encrypted slot blobs from a stego image.
+        Returns a list of bytes objects — one per slot.
+        If the image has no stego payload, returns [].
+        """
+        try:
+            blob = self.stego.extract_data(image_path)
+            # Try to parse as multislot wrapper
+            try:
+                wrapper = json.loads(blob.decode())
+                if wrapper.get("format") == "multislot":
+                    # Each slot is base64-encoded raw encrypted bytes
+                    return [base64.b64decode(s) for s in wrapper.get("slots", [])]
+            except Exception:
+                pass
+            # Not a multislot wrapper: it's a single-slot raw encrypted blob
+            return [blob]
+        except Exception:
+            return []  # Image has no stego payload at all
+
+    def _wrap_multislot(self, slot_blobs):
+        """
+        Wrap a list of raw encrypted blobs into a multislot JSON payload (bytes).
+        """
+        wrapper = {
+            "format": "multislot",
+            "slots": [base64.b64encode(b).decode() for b in slot_blobs]
+        }
+        return json.dumps(wrapper).encode()
+
     def _start_smart_encrypt(self):
         pwd = self.smart_pwd.get()
         if not pwd:
@@ -836,8 +867,19 @@ class StegoApp(ctk.CTk):
                 self._prog(0.2 + 0.3*((i+1)/len(dets)))
 
             if not regions: return
-            payload = json.dumps({"version": 2, "regions": regions})
-            enc = self.crypto.encrypt(payload.encode(), pwd)
+
+            # Encrypt new regions as a fresh slot
+            payload = json.dumps({"version": 2, "regions": regions}).encode()
+            new_slot = self.crypto.encrypt(payload, pwd)
+
+            # Collect all existing slots from the source image (different passwords OK)
+            existing_slots = self._extract_raw_slots(self.selected_image_path)
+            all_slots = existing_slots + [new_slot]
+            if existing_slots:
+                self._status(f"● Chaining {len(existing_slots)} prior slot(s) + 1 new", C["warning"])
+
+            # Wrap everything as a multislot payload and hide it
+            combined = self._wrap_multislot(all_slots)
             self._prog(0.6)
 
             redacted = self.img_proc.draw_redaction_boxes(self.selected_image_path, bboxes, mode="black")
@@ -854,9 +896,9 @@ class StegoApp(ctk.CTk):
             self._prog(0.8)
 
             if save.lower().endswith(".pdf"):
-                PDFConverter.save_secured_pdf(tmp, enc, save)
+                PDFConverter.save_secured_pdf(tmp, combined, save)
             else:
-                self.stego.hide_data(tmp, save, enc)
+                self.stego.hide_data(tmp, save, combined)
 
             os.remove(tmp)
             self._prog(1.0)
@@ -907,11 +949,20 @@ class StegoApp(ctk.CTk):
             roi = orig.crop((x, y, x+w, y+h))
             buf = io.BytesIO()
             roi.save(buf, format="PNG")
-            payload = json.dumps({"version": 2, "regions": [
-                {"x": x, "y": y, "w": w, "h": h, "type": "manual",
-                 "image_data": base64.b64encode(buf.getvalue()).decode()}
-            ]})
-            enc = self.crypto.encrypt(payload.encode(), pwd)
+            new_region = {"x": x, "y": y, "w": w, "h": h, "type": "manual",
+                          "image_data": base64.b64encode(buf.getvalue()).decode()}
+
+            # Encrypt new region as a fresh slot
+            payload = json.dumps({"version": 2, "regions": [new_region]}).encode()
+            new_slot = self.crypto.encrypt(payload, pwd)
+
+            # Collect all existing slots from source image (any prior passwords)
+            existing_slots = self._extract_raw_slots(self.selected_image_path)
+            all_slots = existing_slots + [new_slot]
+            if existing_slots:
+                self._status(f"● Chaining {len(existing_slots)} prior slot(s) + 1 new", C["warning"])
+
+            combined = self._wrap_multislot(all_slots)
             self._prog(0.5)
 
             redacted = self.img_proc.draw_redaction_box(self.selected_image_path, x, y, w, h)
@@ -928,9 +979,9 @@ class StegoApp(ctk.CTk):
             self._prog(0.8)
 
             if save.lower().endswith(".pdf"):
-                PDFConverter.save_secured_pdf(tmp, enc, save)
+                PDFConverter.save_secured_pdf(tmp, combined, save)
             else:
-                self.stego.hide_data(tmp, save, enc)
+                self.stego.hide_data(tmp, save, combined)
 
             os.remove(tmp)
             self._prog(1.0)
@@ -978,20 +1029,48 @@ class StegoApp(ctk.CTk):
     def _run_decrypt(self, pwd):
         try:
             self._status("● AUTHENTICATING...", C["warning"])
-            self._prog(0.3)
+            self._prog(0.2)
 
             if PDFConverter.is_pdf(self.dec_image_path):
-                blob = PDFConverter.extract_secured_pdf(self.dec_image_path)
+                raw = PDFConverter.extract_secured_pdf(self.dec_image_path)
             else:
-                blob = self.stego.extract_data(self.dec_image_path)
+                raw = self.stego.extract_data(self.dec_image_path)
 
-            js = self.crypto.decrypt(blob, pwd).decode()
-            data = json.loads(js)
+            # ── Detect multislot vs single-slot format ──
+            slots_to_try = []
+            try:
+                wrapper = json.loads(raw.decode())
+                if wrapper.get("format") == "multislot":
+                    slots_to_try = [base64.b64decode(s) for s in wrapper.get("slots", [])]
+                else:
+                    slots_to_try = [raw]  # Parsed as JSON but not multislot → single legacy slot
+            except Exception:
+                slots_to_try = [raw]  # Not JSON at all → raw encrypted single slot
 
-            regions = data["regions"] if data.get("version") == 2 else [
-                {"x": data["x"], "y": data["y"], "w": data["w"], "h": data["h"],
-                 "type": "legacy", "image_data": data["image_data"]}
-            ]
+            # ── Try each slot with the given password ──
+            all_regions = []
+            matched_slots = 0
+            for i, slot_blob in enumerate(slots_to_try):
+                try:
+                    js = self.crypto.decrypt(slot_blob, pwd).decode()
+                    data = json.loads(js)
+                    if data.get("version") == 2:
+                        all_regions.extend(data.get("regions", []))
+                    else:
+                        # Legacy single-region format
+                        all_regions.append({
+                            "x": data["x"], "y": data["y"],
+                            "w": data["w"], "h": data["h"],
+                            "type": "legacy", "image_data": data["image_data"]
+                        })
+                    matched_slots += 1
+                except Exception:
+                    pass  # Wrong password for this slot — skip it
+
+            if not all_regions:
+                raise ValueError("No data could be decrypted with this password.")
+
+            self._prog(0.5)
 
             if PDFConverter.is_pdf(self.dec_image_path):
                 full = PDFConverter.get_secured_pdf_image(self.dec_image_path)
@@ -1001,16 +1080,17 @@ class StegoApp(ctk.CTk):
             draw = ImageDraw.Draw(full)
             info = []
 
-            for i, r in enumerate(regions):
+            for i, r in enumerate(all_regions):
                 x, y, w, h = r["x"], r["y"], r["w"], r["h"]
                 patch = Image.open(io.BytesIO(base64.b64decode(r["image_data"])))
                 full.paste(patch, (x, y))
                 draw.rectangle([x, y, x+w, y+h], outline=C["success"], width=4)
                 info.append(f"✓ Region {i+1}: {r.get('type', 'data')} [{w}×{h}]")
-                self._prog(0.3 + 0.6*((i+1)/len(regions)))
+                self._prog(0.5 + 0.45*((i+1)/len(all_regions)))
 
             self.after(0, lambda img=full: self._show_preview(img, self.decrypt_preview))
-            txt = f"VERIFIED: {len(regions)} region(s) restored\n\n" + "\n".join(info)
+            slot_note = f" ({matched_slots}/{len(slots_to_try)} slot(s) matched)" if len(slots_to_try) > 1 else ""
+            txt = f"VERIFIED: {len(all_regions)} region(s) restored{slot_note}\n\n" + "\n".join(info)
             self.after(0, lambda: self.dec_info_label.configure(text="", text_color=C["success"]))
             self.after(0, lambda t=txt: typewriter_text(self.dec_info_label, t, interval=15))
             self._prog(1.0)
