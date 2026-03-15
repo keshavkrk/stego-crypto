@@ -1,6 +1,6 @@
 """
-SecureGuard — Premium Document Redaction System
-Ultra-modern GUI with canvas draw-box for manual redaction.
+SecureGuard AI — Premium Document Redaction System
+Ultra-modern dark-mode GUI with polished design.
 """
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, Canvas
@@ -12,32 +12,42 @@ import base64
 import io
 import tempfile
 
+from gui.animations import pulse_button, typewriter_text, glow_border
+
 from core.crypto_manager import CryptoManager
 from core.stego_manager import StegoManager
 from core.image_processor import ImageProcessor
 from core.auto_redactor import AutoRedactor
 from core.ocr_engine import TesseractNotInstalledError
+from core.pdf_converter import PDFConverter
 
 # ─── Theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 C = {
-    "bg":           "#0A0D14",
-    "card":         "#131824",
-    "input":        "#1C2436",
+    "bg":           "#080B12",
+    "card":         "#111827",
+    "card2":        "#1A2332",
+    "input":        "#1E293B",
     "accent":       "#00E5FF",
     "accent_h":     "#00B8D4",
+    "accent_dim":   "#0D4F5C",
     "primary":      "#7C3AED",
     "primary_h":    "#6D28D9",
+    "primary_dim":  "#3B1F7A",
     "danger":       "#FF2A55",
     "danger_h":     "#E61A41",
+    "danger_dim":   "#5C1028",
     "success":      "#00E676",
     "success_h":    "#00C853",
+    "success_dim":  "#0A4D2E",
     "warning":      "#FFB300",
-    "text":         "#FFFFFF",
-    "text2":        "#9CA3AF",
-    "border":       "#2E3B52",
+    "text":         "#F8FAFC",
+    "text2":        "#94A3B8",
+    "text3":        "#64748B",
+    "border":       "#1E293B",
+    "border_h":     "#334155",
     "sev_high":     "#FF2A55",
     "sev_med":      "#FFB300",
     "sev_low":      "#00E5FF",
@@ -51,7 +61,7 @@ class StegoApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("SecureGuard AI | Document Intelligence & Redaction")
-        self.geometry("1280x850")
+        self.geometry("1360x880")
         self.minsize(1100, 750)
         self.configure(fg_color=C["bg"])
 
@@ -59,19 +69,26 @@ class StegoApp(ctk.CTk):
         self.stego = StegoManager()
         self.img_proc = ImageProcessor()
         self.auto_redactor = AutoRedactor()
+        self.pdf_conv = PDFConverter(dpi=200)
 
         self.selected_image_path = None
         self.dec_image_path = None
         self.scan_results = []
         self.scan_check_vars = []
 
+        # PDF state
+        self._pdf_path = None
+        self._pdf_pages = 0
+        self._pdf_page = 0
+        self._pdf_temp_files = []
+
         # Manual draw state
-        self._draw_img = None        # PIL Image loaded for manual
-        self._draw_tk_img = None     # PhotoImage reference
-        self._draw_scale = 1.0       # scale factor
-        self._draw_rect_id = None    # canvas rectangle id
-        self._draw_start = None      # (x, y) start of drag
-        self._draw_box = None        # (x1, y1, x2, y2) in image coords
+        self._draw_img = None
+        self._draw_tk_img = None
+        self._draw_scale = 1.0
+        self._draw_rect_id = None
+        self._draw_start = None
+        self._draw_box = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=0)
@@ -82,54 +99,102 @@ class StegoApp(ctk.CTk):
         self._create_tabs()
         self._create_status_bar()
 
+        # Pulsing CTA buttons
+        self.after(500, lambda: pulse_button(self.btn_scan, C["primary"], "#9D5CFF"))
+        self.after(500, lambda: pulse_button(self.btn_secure, C["danger"], "#FF5C7A"))
+        self.after(500, lambda: pulse_button(self.btn_manual_go, C["danger"], "#FF5C7A"))
+        self.after(500, lambda: pulse_button(self.btn_decrypt_go, C["success"], "#33FF99"))
+
     # ═══════════════════════════════════════════════════════════════════════════
     #  HEADER
     # ═══════════════════════════════════════════════════════════════════════════
     def _create_header(self):
-        hdr = ctk.CTkFrame(self, height=70, fg_color=C["card"], corner_radius=0)
+        hdr = ctk.CTkFrame(self, height=72, fg_color=C["card"],
+                           corner_radius=0, border_width=0)
         hdr.grid(row=0, column=0, sticky="ew")
-        hdr.grid_columnconfigure(1, weight=1)
+        hdr.grid_columnconfigure(2, weight=1)
 
+        # Shield icon
+        ctk.CTkLabel(hdr, text="🛡️",
+                     font=ctk.CTkFont(size=30)).grid(row=0, column=0,
+                     padx=(28, 6), pady=14, sticky="w")
+
+        # Title
         tf = ctk.CTkFrame(hdr, fg_color="transparent")
-        tf.grid(row=0, column=0, padx=30, pady=12, sticky="w")
-        ctk.CTkLabel(tf, text="🛡️ Secure", font=ctk.CTkFont(family=FNT, size=26, weight="bold"),
+        tf.grid(row=0, column=1, pady=14, sticky="w")
+        ctk.CTkLabel(tf, text="Secure",
+                     font=ctk.CTkFont(family=FNT, size=24, weight="bold"),
                      text_color=C["text"]).pack(side="left")
-        ctk.CTkLabel(tf, text="Guard", font=ctk.CTkFont(family=FNT, size=26, weight="bold"),
+        ctk.CTkLabel(tf, text="Guard",
+                     font=ctk.CTkFont(family=FNT, size=24, weight="bold"),
                      text_color=C["accent"]).pack(side="left")
+        ctk.CTkLabel(tf, text=" AI",
+                     font=ctk.CTkFont(family=FNT, size=24, weight="bold"),
+                     text_color=C["primary"]).pack(side="left")
 
-        ctk.CTkLabel(hdr, text="Next-Gen Document Redaction",
-                     font=ctk.CTkFont(family=FNT, size=13, slant="italic"),
-                     text_color=C["text2"]).grid(row=0, column=1, padx=15, pady=12, sticky="w")
+        # Subtitle
+        ctk.CTkLabel(hdr, text="Next-Gen Document Redaction & Intelligence",
+                     font=ctk.CTkFont(family=FNT, size=12, slant="italic"),
+                     text_color=C["text3"]).grid(row=0, column=2,
+                     padx=20, pady=14, sticky="w")
+
+        # Version badge
+        badge = ctk.CTkFrame(hdr, fg_color=C["primary_dim"], corner_radius=20,
+                             border_width=1, border_color=C["primary"])
+        badge.grid(row=0, column=3, padx=28, pady=14, sticky="e")
+        ctk.CTkLabel(badge, text="  v2.0 PRO  ",
+                     font=ctk.CTkFont(family=FNT, size=10, weight="bold"),
+                     text_color=C["primary"]).pack(padx=8, pady=4)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  NAVIGATION + VIEWS
     # ═══════════════════════════════════════════════════════════════════════════
     def _create_tabs(self):
         container = ctk.CTkFrame(self, fg_color="transparent")
-        container.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
+        container.grid(row=1, column=0, padx=20, pady=(10, 8), sticky="nsew")
         container.grid_columnconfigure(1, weight=1)
         container.grid_rowconfigure(0, weight=1)
 
         # Sidebar nav
-        nav = ctk.CTkFrame(container, width=200, fg_color=C["card"],
-                           corner_radius=14, border_width=1, border_color=C["border"])
-        nav.grid(row=0, column=0, padx=(0, 15), sticky="nsew")
+        nav = ctk.CTkFrame(container, width=210, fg_color=C["card"],
+                           corner_radius=16, border_width=1, border_color=C["border"])
+        nav.grid(row=0, column=0, padx=(0, 12), sticky="nsew")
         nav.grid_propagate(False)
 
-        ctk.CTkLabel(nav, text="NAVIGATION",
-                     font=ctk.CTkFont(family=FNT, size=11, weight="bold"),
-                     text_color=C["text2"]).pack(padx=20, pady=(25, 10), fill="x")
+        ctk.CTkLabel(nav, text="  MODULES",
+                     font=ctk.CTkFont(family=FNT, size=10, weight="bold"),
+                     text_color=C["text3"]).pack(padx=18, pady=(28, 12), fill="x")
 
         self.nav_btns = {}
-        for label, key in [("🔍  Smart Scan", "smart"), ("✏️  Draw & Redact", "manual"),
-                           ("🔓  Restore", "decrypt")]:
-            b = ctk.CTkButton(nav, text=label, height=42,
+        nav_items = [
+            ("🔍  Smart Scan",    "smart",   C["accent"]),
+            ("✏️  Draw & Redact", "manual",  C["danger"]),
+            ("🔓  Restore",       "decrypt", C["success"]),
+        ]
+        for label, key, color in nav_items:
+            b = ctk.CTkButton(nav, text=label, height=46,
                               font=ctk.CTkFont(family=FNT, size=13, weight="bold"),
                               fg_color="transparent", text_color=C["text2"],
-                              hover_color=C["input"], anchor="w",
+                              hover_color=C["card2"], anchor="w",
+                              corner_radius=12,
                               command=lambda k=key: self._switch(k))
-            b.pack(padx=10, pady=4, fill="x")
-            self.nav_btns[key] = b
+            b.pack(padx=10, pady=3, fill="x")
+            self.nav_btns[key] = (b, color)
+
+        # Decorative separator
+        ctk.CTkFrame(nav, height=1, fg_color=C["border"]).pack(
+            padx=20, pady=(20, 15), fill="x")
+
+        # Info card in sidebar
+        info = ctk.CTkFrame(nav, fg_color=C["card2"], corner_radius=12,
+                            border_width=1, border_color=C["border"])
+        info.pack(padx=14, pady=5, fill="x")
+        ctk.CTkLabel(info, text="💡 Quick Tip",
+                     font=ctk.CTkFont(family=FNT, size=11, weight="bold"),
+                     text_color=C["accent"]).pack(padx=12, pady=(10, 4), anchor="w")
+        ctk.CTkLabel(info, text="Use Smart Scan to auto-\ndetect sensitive data like\nSSN, emails, and more.",
+                     font=ctk.CTkFont(family=FNT, size=10),
+                     text_color=C["text3"], justify="left").pack(padx=12, pady=(0, 10), anchor="w")
 
         # Content area
         self.content = ctk.CTkFrame(container, fg_color="transparent")
@@ -148,11 +213,38 @@ class StegoApp(ctk.CTk):
         self._switch("smart")
 
     def _switch(self, key):
-        for k, b in self.nav_btns.items():
+        for k, (b, color) in self.nav_btns.items():
             b.configure(fg_color="transparent", text_color=C["text2"])
             self.views[k].grid_forget()
-        self.nav_btns[key].configure(fg_color=C["input"], text_color=C["accent"])
+        btn, col = self.nav_btns[key]
+        btn.configure(fg_color=C["card2"], text_color=col)
         self.views[key].grid(row=0, column=0, sticky="nsew")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  EMPTY STATE WIDGET
+    # ═══════════════════════════════════════════════════════════════════════════
+    def _create_empty_state(self, parent, icon, title, subtitle, color):
+        """Create a premium empty-state placeholder."""
+        wrapper = ctk.CTkFrame(parent, fg_color="transparent")
+        wrapper.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Circular icon holder
+        icon_bg = ctk.CTkFrame(wrapper, width=80, height=80, fg_color=color,
+                               corner_radius=40)
+        icon_bg.pack(pady=(0, 16))
+        icon_bg.pack_propagate(False)
+        ctk.CTkLabel(icon_bg, text=icon, font=ctk.CTkFont(size=32),
+                     text_color=C["text"]).place(relx=0.5, rely=0.5,
+                     anchor="center")
+
+        ctk.CTkLabel(wrapper, text=title,
+                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
+                     text_color=C["text"]).pack(pady=(0, 6))
+        ctk.CTkLabel(wrapper, text=subtitle,
+                     font=ctk.CTkFont(family=FNT, size=12),
+                     text_color=C["text3"]).pack()
+
+        return wrapper
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  VIEW 1: SMART SCAN
@@ -165,75 +257,87 @@ class StegoApp(ctk.CTk):
 
         # Left panel
         lp = ctk.CTkFrame(v, width=340, fg_color=C["card"],
-                          corner_radius=14, border_width=1, border_color=C["border"])
+                          corner_radius=16, border_width=1, border_color=C["border"])
         lp.grid(row=0, column=0, padx=(0, 8), sticky="nsew")
         lp.grid_propagate(False)
         lp.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(lp, text="Intelligence Engine",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
-                     text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(20, 8), sticky="w")
+        # Section header
+        hdr = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        hdr.grid(row=0, column=0, padx=15, pady=(15, 8), sticky="ew")
+        ctk.CTkLabel(hdr, text="🧠  Intelligence Engine",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
+                     text_color=C["text"]).pack(padx=14, pady=10, anchor="w")
 
-        ctk.CTkButton(lp, text="📂 Load Document", height=42,
+        ctk.CTkButton(lp, text="📂  Load Document", height=44,
                       font=ctk.CTkFont(family=FNT, size=13, weight="bold"),
-                      fg_color=C["input"], hover_color="#2D3A54",
-                      border_width=1, border_color=C["border"], text_color=C["text"],
-                      command=self._smart_load).grid(row=1, column=0, padx=20, pady=5, sticky="ew")
+                      fg_color=C["input"], hover_color=C["border_h"],
+                      border_width=1, border_color=C["border_h"], text_color=C["text"],
+                      corner_radius=12,
+                      command=self._smart_load).grid(row=1, column=0, padx=15, pady=5, sticky="ew")
 
-        self.btn_scan = ctk.CTkButton(lp, text="⚡ Start AI Scan", height=42,
+        self.btn_scan = ctk.CTkButton(lp, text="⚡  Start AI Scan", height=44,
                                       font=ctk.CTkFont(family=FNT, size=13, weight="bold"),
                                       fg_color=C["primary"], hover_color=C["primary_h"],
+                                      corner_radius=12,
                                       command=self._start_smart_scan, state="disabled")
-        self.btn_scan.grid(row=2, column=0, padx=20, pady=(8, 12), sticky="ew")
+        self.btn_scan.grid(row=2, column=0, padx=15, pady=(5, 12), sticky="ew")
 
         self.lbl_det = ctk.CTkLabel(lp, text="Detected Targets (0)",
                                     font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
                                     text_color=C["text2"], anchor="w")
         self.lbl_det.grid(row=3, column=0, padx=20, pady=(8, 4), sticky="ew")
 
-        self.det_scroll = ctk.CTkScrollableFrame(lp, fg_color=C["input"], corner_radius=10)
-        self.det_scroll.grid(row=4, column=0, padx=15, pady=(0, 10), sticky="nsew")
+        self.det_scroll = ctk.CTkScrollableFrame(lp, fg_color=C["input"],
+                                                  corner_radius=12)
+        self.det_scroll.grid(row=4, column=0, padx=12, pady=(0, 10), sticky="nsew")
         lp.grid_rowconfigure(4, weight=1)
 
-        sf = ctk.CTkFrame(lp, fg_color="transparent")
-        sf.grid(row=5, column=0, padx=15, pady=(0, 15), sticky="ew")
+        # Password section
+        sf = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        sf.grid(row=5, column=0, padx=12, pady=(0, 12), sticky="ew")
         sf.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(sf, text="Encryption Key",
+        ctk.CTkLabel(sf, text="🔑  Encryption Key",
                      font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
-                     text_color=C["text2"]).grid(row=0, column=0, padx=5, pady=(0, 4), sticky="w")
-        self.smart_pwd = ctk.CTkEntry(sf, placeholder_text="Password...", show="•", height=38,
-                                      fg_color=C["input"], border_color=C["border"], text_color=C["accent"])
-        self.smart_pwd.grid(row=1, column=0, padx=5, pady=(0, 10), sticky="ew")
+                     text_color=C["text2"]).grid(row=0, column=0, padx=14, pady=(12, 4), sticky="w")
+        self.smart_pwd = ctk.CTkEntry(sf, placeholder_text="Enter password...", show="•", height=40,
+                                      fg_color=C["input"], border_color=C["border_h"],
+                                      text_color=C["accent"], corner_radius=10)
+        self.smart_pwd.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
 
-        self.btn_secure = ctk.CTkButton(sf, text="🔒 Redact & Secure", height=48,
+        self.btn_secure = ctk.CTkButton(sf, text="🔒  Redact & Secure", height=48,
                                         font=ctk.CTkFont(family=FNT, size=14, weight="bold"),
                                         fg_color=C["danger"], hover_color=C["danger_h"],
+                                        corner_radius=12,
                                         command=self._start_smart_encrypt, state="disabled")
-        self.btn_secure.grid(row=2, column=0, padx=5, sticky="ew")
+        self.btn_secure.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
 
         # Right panel
-        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=14,
+        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=16,
                           border_width=1, border_color=C["border"])
         rp.grid(row=0, column=1, sticky="nsew")
         rp.grid_columnconfigure(0, weight=1)
         rp.grid_rowconfigure(1, weight=1)
+        glow_border(rp, C["border"], C["accent_dim"], interval=80)
 
-        ctk.CTkLabel(rp, text="Visual Analysis",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
+        ctk.CTkLabel(rp, text="📊  Visual Analysis",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
                      text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
 
-        bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=10)
-        bg.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="nsew")
+        bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=12)
+        bg.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
         bg.grid_columnconfigure(0, weight=1)
         bg.grid_rowconfigure(0, weight=1)
 
-        self.smart_preview = ctk.CTkLabel(bg, text="Load a document to begin.",
-                                          font=ctk.CTkFont(family=FNT, size=14), text_color=C["text2"])
+        self.smart_preview = ctk.CTkLabel(bg, text="")
         self.smart_preview.grid(row=0, column=0)
+        self.smart_empty = self._create_empty_state(
+            bg, "📂", "No Document Loaded",
+            "Click 'Load Document' to get started", C["accent_dim"])
 
     # ═══════════════════════════════════════════════════════════════════════════
-    #  VIEW 2: DRAW & REDACT — Canvas with mouse drawing
+    #  VIEW 2: DRAW & REDACT
     # ═══════════════════════════════════════════════════════════════════════════
     def _build_manual(self):
         v = self.views["manual"]
@@ -243,90 +347,98 @@ class StegoApp(ctk.CTk):
 
         # Left panel
         lp = ctk.CTkFrame(v, width=300, fg_color=C["card"],
-                          corner_radius=14, border_width=1, border_color=C["border"])
+                          corner_radius=16, border_width=1, border_color=C["border"])
         lp.grid(row=0, column=0, padx=(0, 8), sticky="nsew")
         lp.grid_propagate(False)
         lp.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(lp, text="Draw & Redact",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
-                     text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(20, 8), sticky="w")
+        hdr = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        hdr.grid(row=0, column=0, padx=15, pady=(15, 8), sticky="ew")
+        ctk.CTkLabel(hdr, text="✏️  Draw & Redact",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
+                     text_color=C["text"]).pack(padx=14, pady=10, anchor="w")
 
-        ctk.CTkButton(lp, text="📂 Load Document", height=42,
+        ctk.CTkButton(lp, text="📂  Load Document", height=44,
                       font=ctk.CTkFont(family=FNT, size=13, weight="bold"),
-                      fg_color=C["input"], hover_color="#2D3A54",
-                      border_width=1, border_color=C["border"], text_color=C["text"],
-                      command=self._manual_load).grid(row=1, column=0, padx=20, pady=5, sticky="ew")
+                      fg_color=C["input"], hover_color=C["border_h"],
+                      border_width=1, border_color=C["border_h"], text_color=C["text"],
+                      corner_radius=12,
+                      command=self._manual_load).grid(row=1, column=0, padx=15, pady=5, sticky="ew")
 
         # Instructions
-        ctk.CTkLabel(lp, text="Click and drag on the image\nto draw a redaction box.",
-                     font=ctk.CTkFont(family=FNT, size=12),
-                     text_color=C["text2"], justify="left"
-                     ).grid(row=2, column=0, padx=20, pady=(15, 5), sticky="w")
+        tip = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=10)
+        tip.grid(row=2, column=0, padx=15, pady=(10, 5), sticky="ew")
+        ctk.CTkLabel(tip, text="💡 Click and drag on the\nimage to draw a redaction box.",
+                     font=ctk.CTkFont(family=FNT, size=11),
+                     text_color=C["text3"], justify="left").pack(padx=12, pady=10, anchor="w")
 
-        # Coordinates display (read-only, auto-populated from drawing)
-        coord_frame = ctk.CTkFrame(lp, fg_color=C["input"], corner_radius=10)
-        coord_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
-        coord_frame.grid_columnconfigure((0, 1), weight=1)
+        # Coordinates display
+        coord_frame = ctk.CTkFrame(lp, fg_color=C["input"], corner_radius=12,
+                                   border_width=1, border_color=C["border"])
+        coord_frame.grid(row=3, column=0, padx=15, pady=8, sticky="ew")
 
-        ctk.CTkLabel(coord_frame, text="Selected Region",
+        ctk.CTkLabel(coord_frame, text="📐 Selected Region",
                      font=ctk.CTkFont(family=FNT, size=11, weight="bold"),
-                     text_color=C["text2"]).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
-
+                     text_color=C["text2"]).grid(row=0, column=0, padx=12, pady=(10, 4), sticky="w")
         self.lbl_coords = ctk.CTkLabel(coord_frame, text="No selection yet",
-                                       font=ctk.CTkFont(family=FNT, size=12),
+                                       font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
                                        text_color=C["accent"], justify="left")
-        self.lbl_coords.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+        self.lbl_coords.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="w")
 
-        # Clear selection button
-        ctk.CTkButton(lp, text="✖ Clear Selection", height=32,
+        ctk.CTkButton(lp, text="✖  Clear Selection", height=34,
                       font=ctk.CTkFont(family=FNT, size=12),
                       fg_color="transparent", hover_color=C["input"],
-                      border_width=1, border_color=C["border"], text_color=C["text2"],
-                      command=self._clear_draw_box).grid(row=4, column=0, padx=20, pady=5, sticky="ew")
+                      border_width=1, border_color=C["border_h"], text_color=C["text2"],
+                      corner_radius=10,
+                      command=self._clear_draw_box).grid(row=4, column=0, padx=15, pady=4, sticky="ew")
 
         # Password
-        ctk.CTkLabel(lp, text="Encryption Key",
+        pwd_frame = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        pwd_frame.grid(row=5, column=0, padx=12, pady=(10, 12), sticky="ew")
+        pwd_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(pwd_frame, text="🔑  Encryption Key",
                      font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
-                     text_color=C["text2"]).grid(row=5, column=0, padx=25, pady=(15, 4), sticky="w")
+                     text_color=C["text2"]).grid(row=0, column=0, padx=14, pady=(12, 4), sticky="w")
+        self.manual_pwd = ctk.CTkEntry(pwd_frame, placeholder_text="Enter password...", show="•", height=40,
+                                       fg_color=C["input"], border_color=C["border_h"],
+                                       text_color=C["accent"], corner_radius=10)
+        self.manual_pwd.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
 
-        self.manual_pwd = ctk.CTkEntry(lp, placeholder_text="Password...", show="•", height=38,
-                                       fg_color=C["input"], border_color=C["border"], text_color=C["accent"])
-        self.manual_pwd.grid(row=6, column=0, padx=20, pady=(0, 15), sticky="ew")
-
-        self.btn_manual_go = ctk.CTkButton(lp, text="🔒 Redact & Secure", height=48,
+        self.btn_manual_go = ctk.CTkButton(pwd_frame, text="🔒  Redact & Secure", height=48,
                                            font=ctk.CTkFont(family=FNT, size=14, weight="bold"),
                                            fg_color=C["danger"], hover_color=C["danger_h"],
+                                           corner_radius=12,
                                            command=self._start_manual_encrypt, state="disabled")
-        self.btn_manual_go.grid(row=7, column=0, padx=20, pady=(0, 20), sticky="ew")
+        self.btn_manual_go.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
 
         # Right panel — Canvas for drawing
-        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=14,
+        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=16,
                           border_width=1, border_color=C["border"])
         rp.grid(row=0, column=1, sticky="nsew")
         rp.grid_columnconfigure(0, weight=1)
         rp.grid_rowconfigure(1, weight=1)
+        glow_border(rp, C["border"], C["danger_dim"], interval=80)
 
-        ctk.CTkLabel(rp, text="Draw Redaction Box",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
+        ctk.CTkLabel(rp, text="🎯  Draw Redaction Box",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
                      text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
 
-        canvas_bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=10)
-        canvas_bg.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="nsew")
+        canvas_bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=12)
+        canvas_bg.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
         canvas_bg.grid_columnconfigure(0, weight=1)
         canvas_bg.grid_rowconfigure(0, weight=1)
 
-        self.draw_canvas = Canvas(canvas_bg, bg="#0A0D14", highlightthickness=0, cursor="crosshair")
+        self.draw_canvas = Canvas(canvas_bg, bg=C["bg"], highlightthickness=0, cursor="crosshair")
         self.draw_canvas.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
-        # Mouse bindings for drawing
         self.draw_canvas.bind("<ButtonPress-1>", self._on_draw_press)
         self.draw_canvas.bind("<B1-Motion>", self._on_draw_drag)
         self.draw_canvas.bind("<ButtonRelease-1>", self._on_draw_release)
 
-        # Placeholder text
-        self.draw_canvas.create_text(300, 200, text="Load a document, then drag to draw a box.",
-                                     fill=C["text2"], font=(FNT, 14), tags="placeholder")
+        self.draw_canvas.create_text(300, 200,
+            text="Load a document, then drag to draw a box.",
+            fill=C["text3"], font=(FNT, 13), tags="placeholder")
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  VIEW 3: DECRYPT
@@ -338,89 +450,113 @@ class StegoApp(ctk.CTk):
         v.grid_rowconfigure(0, weight=1)
 
         lp = ctk.CTkFrame(v, width=340, fg_color=C["card"],
-                          corner_radius=14, border_width=1, border_color=C["border"])
+                          corner_radius=16, border_width=1, border_color=C["border"])
         lp.grid(row=0, column=0, padx=(0, 8), sticky="nsew")
         lp.grid_propagate(False)
         lp.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(lp, text="Recovery Module",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
-                     text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(20, 12), sticky="w")
+        hdr = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        hdr.grid(row=0, column=0, padx=15, pady=(15, 8), sticky="ew")
+        ctk.CTkLabel(hdr, text="🔓  Recovery Module",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
+                     text_color=C["text"]).pack(padx=14, pady=10, anchor="w")
 
-        ctk.CTkButton(lp, text="📂 Load Secured Asset", height=42,
+        ctk.CTkButton(lp, text="📂  Load Secured Asset", height=44,
                       font=ctk.CTkFont(family=FNT, size=13, weight="bold"),
-                      fg_color=C["input"], hover_color="#2D3A54",
-                      border_width=1, border_color=C["border"], text_color=C["text"],
-                      command=self._decrypt_load).grid(row=1, column=0, padx=20, pady=5, sticky="ew")
+                      fg_color=C["input"], hover_color=C["border_h"],
+                      border_width=1, border_color=C["border_h"], text_color=C["text"],
+                      corner_radius=12,
+                      command=self._decrypt_load).grid(row=1, column=0, padx=15, pady=5, sticky="ew")
 
-        ctk.CTkLabel(lp, text="Decryption Key",
+        pwd_frame = ctk.CTkFrame(lp, fg_color=C["card2"], corner_radius=12)
+        pwd_frame.grid(row=2, column=0, padx=12, pady=(12, 8), sticky="ew")
+        pwd_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(pwd_frame, text="🔑  Decryption Key",
                      font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
-                     text_color=C["text2"]).grid(row=2, column=0, padx=25, pady=(20, 4), sticky="w")
+                     text_color=C["text2"]).grid(row=0, column=0, padx=14, pady=(12, 4), sticky="w")
+        self.decrypt_pwd = ctk.CTkEntry(pwd_frame, placeholder_text="Enter password...", show="•", height=40,
+                                        fg_color=C["input"], border_color=C["border_h"],
+                                        text_color=C["accent"], corner_radius=10)
+        self.decrypt_pwd.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
 
-        self.decrypt_pwd = ctk.CTkEntry(lp, placeholder_text="Password...", show="•", height=38,
-                                        fg_color=C["input"], border_color=C["border"], text_color=C["accent"])
-        self.decrypt_pwd.grid(row=3, column=0, padx=20, pady=(0, 15), sticky="ew")
-
-        ctk.CTkButton(lp, text="🔓 Authenticate & Reveal", height=48,
+        self.btn_decrypt_go = ctk.CTkButton(pwd_frame, text="🔓  Authenticate & Reveal", height=48,
                       font=ctk.CTkFont(family=FNT, size=14, weight="bold"),
                       fg_color=C["success"], hover_color=C["success_h"],
-                      command=self._start_decryption).grid(row=4, column=0, padx=20, pady=0, sticky="ew")
+                      corner_radius=12,
+                      command=self._start_decryption)
+        self.btn_decrypt_go.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
 
-        self.dec_info_scroll = ctk.CTkScrollableFrame(lp, fg_color=C["input"], corner_radius=10)
-        self.dec_info_scroll.grid(row=5, column=0, padx=20, pady=(15, 15), sticky="nsew")
-        lp.grid_rowconfigure(5, weight=1)
+        # Results
+        ctk.CTkLabel(lp, text="📋  Decryption Results",
+                     font=ctk.CTkFont(family=FNT, size=12, weight="bold"),
+                     text_color=C["text2"]).grid(row=3, column=0, padx=20, pady=(8, 4), sticky="w")
 
-        self.dec_info_label = ctk.CTkLabel(self.dec_info_scroll, text="Results appear here after decryption.",
+        self.dec_info_scroll = ctk.CTkScrollableFrame(lp, fg_color=C["input"],
+                                                       corner_radius=12)
+        self.dec_info_scroll.grid(row=4, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        lp.grid_rowconfigure(4, weight=1)
+
+        self.dec_info_label = ctk.CTkLabel(self.dec_info_scroll,
+                                           text="Results appear here after decryption.",
                                            font=ctk.CTkFont(family=FNT, size=12),
-                                           text_color=C["text2"], justify="left", wraplength=260)
-        self.dec_info_label.pack(padx=10, pady=10, anchor="nw")
+                                           text_color=C["text3"], justify="left", wraplength=260)
+        self.dec_info_label.pack(padx=12, pady=12, anchor="nw")
 
         # Right panel
-        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=14,
+        rp = ctk.CTkFrame(v, fg_color=C["card"], corner_radius=16,
                           border_width=1, border_color=C["border"])
         rp.grid(row=0, column=1, sticky="nsew")
         rp.grid_columnconfigure(0, weight=1)
         rp.grid_rowconfigure(1, weight=1)
+        glow_border(rp, C["border"], C["success_dim"], interval=80)
 
-        ctk.CTkLabel(rp, text="Restored Preview",
-                     font=ctk.CTkFont(family=FNT, size=16, weight="bold"),
+        ctk.CTkLabel(rp, text="🖼️  Restored Preview",
+                     font=ctk.CTkFont(family=FNT, size=15, weight="bold"),
                      text_color=C["text"]).grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
 
-        bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=10)
-        bg.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="nsew")
+        bg = ctk.CTkFrame(rp, fg_color=C["bg"], corner_radius=12)
+        bg.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
         bg.grid_columnconfigure(0, weight=1)
         bg.grid_rowconfigure(0, weight=1)
 
-        self.decrypt_preview = ctk.CTkLabel(bg, text="Load a secured document.",
-                                            font=ctk.CTkFont(family=FNT, size=14), text_color=C["text2"])
+        self.decrypt_preview = ctk.CTkLabel(bg, text="")
         self.decrypt_preview.grid(row=0, column=0)
+        self.decrypt_empty = self._create_empty_state(
+            bg, "🔓", "No Secured Document",
+            "Load a secured .png or .pdf to decrypt", C["success_dim"])
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  STATUS BAR
     # ═══════════════════════════════════════════════════════════════════════════
     def _create_status_bar(self):
-        bar = ctk.CTkFrame(self, height=38, fg_color=C["card"], corner_radius=0)
+        bar = ctk.CTkFrame(self, height=40, fg_color=C["card"], corner_radius=0)
         bar.grid(row=2, column=0, sticky="ew")
         bar.grid_columnconfigure(0, weight=1)
         bar.grid_propagate(False)
 
-        self.status_lbl = ctk.CTkLabel(bar, text="SYSTEM READY",
+        self.status_lbl = ctk.CTkLabel(bar, text="● SYSTEM READY",
                                        font=ctk.CTkFont(family=FNT, size=11, weight="bold"),
-                                       text_color=C["text2"])
-        self.status_lbl.grid(row=0, column=0, padx=20, pady=8, sticky="w")
+                                       text_color=C["text3"])
+        self.status_lbl.grid(row=0, column=0, padx=24, pady=10, sticky="w")
 
-        self.progress = ctk.CTkProgressBar(bar, width=220, height=6, corner_radius=3,
-                                           progress_color=C["accent"], fg_color=C["bg"])
-        self.progress.grid(row=0, column=1, padx=20, pady=16, sticky="e")
+        self.progress = ctk.CTkProgressBar(bar, width=200, height=6, corner_radius=3,
+                                           progress_color=C["accent"], fg_color=C["input"])
+        self.progress.grid(row=0, column=1, padx=24, pady=16, sticky="e")
         self.progress.set(0)
 
     def _status(self, msg, color=None):
-        try: self.status_lbl.configure(text=msg, text_color=color or C["text2"])
-        except: pass
+        try:
+            self.status_lbl.configure(text_color=color or C["text3"])
+            typewriter_text(self.status_lbl, msg, interval=18)
+        except:
+            pass
 
     def _prog(self, v):
-        try: self.progress.set(v)
-        except: pass
+        try:
+            self.progress.set(v)
+        except:
+            pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PREVIEW UTILITY
@@ -432,6 +568,13 @@ class StegoApp(ctk.CTk):
             photo = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
             label.configure(image=photo, text="")
             label._img_ref = photo
+
+            # Hide empty state
+            if label == self.smart_preview and hasattr(self, 'smart_empty'):
+                self.smart_empty.place_forget()
+                self.smart_preview_img = img
+            if label == self.decrypt_preview and hasattr(self, 'decrypt_empty'):
+                self.decrypt_empty.place_forget()
         except Exception as e:
             label.configure(text=f"Preview error: {e}")
 
@@ -446,7 +589,6 @@ class StegoApp(ctk.CTk):
         self.lbl_coords.configure(text="No selection yet")
         self.btn_manual_go.configure(state="disabled")
 
-        # Wait for canvas to render so we get its size
         self.draw_canvas.update_idletasks()
         cw = max(self.draw_canvas.winfo_width(), 400)
         ch = max(self.draw_canvas.winfo_height(), 400)
@@ -462,7 +604,6 @@ class StegoApp(ctk.CTk):
         self._draw_tk_img = ImageTk.PhotoImage(resized)
 
         self.draw_canvas.delete("all")
-        # Center the image on canvas
         self._draw_offset_x = (cw - display_w) // 2
         self._draw_offset_y = (ch - display_h) // 2
         self.draw_canvas.create_image(self._draw_offset_x, self._draw_offset_y,
@@ -471,7 +612,6 @@ class StegoApp(ctk.CTk):
     def _on_draw_press(self, event):
         if self._draw_img is None:
             return
-        # Remove old rectangle
         if self._draw_rect_id:
             self.draw_canvas.delete(self._draw_rect_id)
         self._draw_start = (event.x, event.y)
@@ -492,8 +632,6 @@ class StegoApp(ctk.CTk):
 
         sx, sy = self._draw_start
         ex, ey = event.x, event.y
-
-        # Convert canvas coords to image coords
         ox, oy = self._draw_offset_x, self._draw_offset_y
         scale = self._draw_scale
 
@@ -502,7 +640,6 @@ class StegoApp(ctk.CTk):
         x2 = int((max(sx, ex) - ox) / scale)
         y2 = int((max(sy, ey) - oy) / scale)
 
-        # Clamp to image bounds
         iw, ih = self._draw_img.size
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(iw, x2), min(ih, y2)
@@ -512,7 +649,7 @@ class StegoApp(ctk.CTk):
             self._draw_box = (x1, y1, x2, y2)
             self.lbl_coords.configure(text=f"X={x1}  Y={y1}  W={w}  H={h}")
             self.btn_manual_go.configure(state="normal")
-            self._status(f"Selection: {w}×{h} pixels")
+            self._status(f"● Selection: {w}×{h} pixels")
         else:
             self._draw_box = None
             self.lbl_coords.configure(text="Too small — try again")
@@ -528,23 +665,50 @@ class StegoApp(ctk.CTk):
         self.lbl_coords.configure(text="No selection yet")
         self.btn_manual_go.configure(state="disabled")
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    #  SMART SCAN LOGIC
-    # ═══════════════════════════════════════════════════════════════════════════
+    def _cleanup_pdf_temps(self):
+        """Remove any temp files from previous PDF loads."""
+        for f in self._pdf_temp_files:
+            try: os.remove(f)
+            except: pass
+        self._pdf_temp_files = []
+
+    def _load_file_as_image(self, path, page=0):
+        if PDFConverter.is_pdf(path):
+            self._pdf_path = path
+            self._pdf_pages = self.pdf_conv.get_page_count(path)
+            self._pdf_page = page
+            tmp = self.pdf_conv.pdf_page_to_temp_file(path, page)
+            self._pdf_temp_files.append(tmp)
+            return tmp
+        else:
+            self._pdf_path = None
+            self._pdf_pages = 0
+            self._pdf_page = 0
+            return path
+
+    FILE_TYPES = [("Documents", "*.png *.jpg *.jpeg *.bmp *.tiff *.tif *.pdf")]
+
     def _smart_load(self):
-        path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp *.tiff *.tif")])
+        path = filedialog.askopenfilename(filetypes=self.FILE_TYPES)
         if not path: return
-        self.selected_image_path = path
-        self._show_preview(path, self.smart_preview)
+        self._cleanup_pdf_temps()
+        try:
+            img_path = self._load_file_as_image(path)
+        except Exception as e:
+            messagebox.showerror("Load Error", str(e)); return
+        self.selected_image_path = img_path
+        self._show_preview(img_path, self.smart_preview)
         self.btn_scan.configure(state="normal")
         self.btn_secure.configure(state="disabled")
         self.scan_results = []
         self._clear_det_list()
-        self._status(f"Loaded: {os.path.basename(path)}")
+        name = os.path.basename(path)
+        page_info = f" (page {self._pdf_page + 1}/{self._pdf_pages})" if self._pdf_path else ""
+        self._status(f"● Loaded: {name}{page_info}")
 
     def _start_smart_scan(self):
         self.btn_scan.configure(state="disabled")
-        self._status("🔍 SCANNING FOR PII...", C["warning"])
+        self._status("● SCANNING FOR PII...", C["warning"])
         self._prog(0.1)
         threading.Thread(target=self._run_scan, daemon=True).start()
 
@@ -557,15 +721,17 @@ class StegoApp(ctk.CTk):
             self.after(0, self._show_scan_results)
             self._prog(1.0)
             if results:
-                self._status(f"🎯 FOUND {len(results)} TARGET(S)", C["success"])
+                self._status(f"● FOUND {len(results)} TARGET(S)", C["success"])
             else:
-                self._status("ALL CLEAR: No sensitive data found.", C["text2"])
+                self._status("● ALL CLEAR: No sensitive data found.", C["text3"])
         except TesseractNotInstalledError as e:
-            self._status("❌ TESSERACT NOT INSTALLED", C["danger"])
-            self.after(0, lambda: messagebox.showerror("Tesseract Required", str(e)))
+            _msg = str(e)
+            self._status("● TESSERACT NOT INSTALLED", C["danger"])
+            self.after(0, lambda m=_msg: messagebox.showerror("Tesseract Required", m))
         except Exception as e:
-            self._status("❌ SCAN FAILED", C["danger"])
-            self.after(0, lambda: messagebox.showerror("Scan Error", str(e)))
+            _msg = str(e)
+            self._status("● SCAN FAILED", C["danger"])
+            self.after(0, lambda m=_msg: messagebox.showerror("Scan Error", m))
         finally:
             self.after(0, lambda: self.btn_scan.configure(state="normal"))
             self._prog(0)
@@ -575,7 +741,7 @@ class StegoApp(ctk.CTk):
         self.scan_check_vars = []
         if not self.scan_results:
             ctk.CTkLabel(self.det_scroll, text="No sensitive data detected.",
-                         text_color=C["text2"]).pack(padx=10, pady=10)
+                         text_color=C["text3"]).pack(padx=10, pady=10)
             return
 
         self.lbl_det.configure(text=f"Detected Targets ({len(self.scan_results)})")
@@ -584,9 +750,9 @@ class StegoApp(ctk.CTk):
             self.scan_check_vars.append(var)
             sev_color = SEV.get(det["severity"], C["accent"])
 
-            fr = ctk.CTkFrame(self.det_scroll, fg_color=C["card"],
-                              corner_radius=8, border_width=1, border_color=C["border"])
-            fr.pack(padx=5, pady=4, fill="x")
+            fr = ctk.CTkFrame(self.det_scroll, fg_color=C["card2"],
+                              corner_radius=10, border_width=1, border_color=C["border"])
+            fr.pack(padx=4, pady=3, fill="x")
 
             # Severity accent bar
             ctk.CTkFrame(fr, width=4, fg_color=sev_color, corner_radius=0).pack(side="left", fill="y")
@@ -650,7 +816,7 @@ class StegoApp(ctk.CTk):
 
     def _run_smart_encrypt(self, dets, pwd):
         try:
-            self._status("🔒 ENCRYPTING...", C["warning"])
+            self._status("● ENCRYPTING...", C["warning"])
             self._prog(0.2)
             orig = Image.open(self.selected_image_path)
             regions, bboxes = [], []
@@ -679,31 +845,46 @@ class StegoApp(ctk.CTk):
             os.close(fd)
             self.img_proc.save_image(redacted, tmp)
 
-            save = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
+            save = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG Image (stego)", "*.png"), ("PDF Document", "*.pdf")]
+            )
             if not save:
                 os.remove(tmp); return
             self._prog(0.8)
-            self.stego.hide_data(tmp, save, enc)
+
+            if save.lower().endswith(".pdf"):
+                PDFConverter.save_secured_pdf(tmp, enc, save)
+            else:
+                self.stego.hide_data(tmp, save, enc)
+
             os.remove(tmp)
             self._prog(1.0)
-            self._status("✅ ASSET SECURED", C["success"])
-            self.after(0, lambda: messagebox.showinfo("Success", f"Saved to:\n{save}"))
+            self._status("● ASSET SECURED", C["success"])
+            fmt = "PDF" if save.lower().endswith(".pdf") else "PNG"
+            self.after(0, lambda s=save, f=fmt: messagebox.showinfo("Success", f"Saved as {f}:\n{s}"))
         except Exception as e:
-            self._status("❌ ERROR", C["danger"])
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            _msg = str(e)
+            self._status("● ERROR", C["danger"])
+            self.after(0, lambda m=_msg: messagebox.showerror("Error", m))
         finally:
             self._prog(0)
             self.after(0, lambda: self.btn_secure.configure(state="normal"))
 
     # ═══════════════════════════════════════════════════════════════════════════
-    #  MANUAL REDACT LOGIC (Draw-box based)
+    #  MANUAL REDACT LOGIC
     # ═══════════════════════════════════════════════════════════════════════════
     def _manual_load(self):
-        path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp *.tiff *.tif")])
+        path = filedialog.askopenfilename(filetypes=self.FILE_TYPES)
         if not path: return
-        self.selected_image_path = path
-        self._load_image_to_canvas(path)
-        self._status(f"Loaded: {os.path.basename(path)} — draw a box to select area")
+        self._cleanup_pdf_temps()
+        try:
+            img_path = self._load_file_as_image(path)
+        except Exception as e:
+            messagebox.showerror("Load Error", str(e)); return
+        self.selected_image_path = img_path
+        self._load_image_to_canvas(img_path)
+        self._status(f"● Loaded: {os.path.basename(path)} — draw a box to select area")
 
     def _start_manual_encrypt(self):
         if not self.selected_image_path or not self._draw_box:
@@ -720,7 +901,7 @@ class StegoApp(ctk.CTk):
 
     def _run_manual(self, x, y, w, h, pwd):
         try:
-            self._status("🔒 Processing...", C["warning"])
+            self._status("● Processing...", C["warning"])
             self._prog(0.2)
             orig = Image.open(self.selected_image_path)
             roi = orig.crop((x, y, x+w, y+h))
@@ -738,18 +919,28 @@ class StegoApp(ctk.CTk):
             os.close(fd)
             self.img_proc.save_image(redacted, tmp)
 
-            save = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
+            save = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG Image (stego)", "*.png"), ("PDF Document", "*.pdf")]
+            )
             if not save:
                 os.remove(tmp); return
             self._prog(0.8)
-            self.stego.hide_data(tmp, save, enc)
+
+            if save.lower().endswith(".pdf"):
+                PDFConverter.save_secured_pdf(tmp, enc, save)
+            else:
+                self.stego.hide_data(tmp, save, enc)
+
             os.remove(tmp)
             self._prog(1.0)
-            self._status("✅ SAVED", C["success"])
-            self.after(0, lambda: messagebox.showinfo("Success", f"Saved to:\n{save}"))
+            self._status("● SAVED", C["success"])
+            fmt = "PDF" if save.lower().endswith(".pdf") else "PNG"
+            self.after(0, lambda s=save, f=fmt: messagebox.showinfo("Success", f"Saved as {f}:\n{s}"))
         except Exception as e:
-            self._status("❌ ERROR", C["danger"])
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            _msg = str(e)
+            self._status("● ERROR", C["danger"])
+            self.after(0, lambda m=_msg: messagebox.showerror("Error", m))
         finally:
             self._prog(0)
             self.after(0, lambda: self.btn_manual_go.configure(state="normal"))
@@ -758,11 +949,21 @@ class StegoApp(ctk.CTk):
     #  DECRYPT LOGIC
     # ═══════════════════════════════════════════════════════════════════════════
     def _decrypt_load(self):
-        path = filedialog.askopenfilename(filetypes=[("PNG Images", "*.png")])
-        if path:
-            self.dec_image_path = path
+        path = filedialog.askopenfilename(filetypes=[
+            ("Secured Documents", "*.png *.pdf"),
+        ])
+        if not path:
+            return
+        self.dec_image_path = path
+        if PDFConverter.is_pdf(path):
+            try:
+                img = PDFConverter.pdf_to_pil_image(path)
+                self._show_preview(img, self.decrypt_preview)
+            except:
+                self.decrypt_preview.configure(text="PDF loaded (preview unavailable)")
+        else:
             self._show_preview(path, self.decrypt_preview)
-            self._status(f"Loaded: {os.path.basename(path)}")
+        self._status(f"● Loaded: {os.path.basename(path)}")
 
     def _start_decryption(self):
         if not self.dec_image_path:
@@ -776,9 +977,14 @@ class StegoApp(ctk.CTk):
 
     def _run_decrypt(self, pwd):
         try:
-            self._status("🔓 AUTHENTICATING...", C["warning"])
+            self._status("● AUTHENTICATING...", C["warning"])
             self._prog(0.3)
-            blob = self.stego.extract_data(self.dec_image_path)
+
+            if PDFConverter.is_pdf(self.dec_image_path):
+                blob = PDFConverter.extract_secured_pdf(self.dec_image_path)
+            else:
+                blob = self.stego.extract_data(self.dec_image_path)
+
             js = self.crypto.decrypt(blob, pwd).decode()
             data = json.loads(js)
 
@@ -787,7 +993,11 @@ class StegoApp(ctk.CTk):
                  "type": "legacy", "image_data": data["image_data"]}
             ]
 
-            full = Image.open(self.dec_image_path)
+            if PDFConverter.is_pdf(self.dec_image_path):
+                full = PDFConverter.get_secured_pdf_image(self.dec_image_path)
+            else:
+                full = Image.open(self.dec_image_path)
+
             draw = ImageDraw.Draw(full)
             info = []
 
@@ -801,15 +1011,18 @@ class StegoApp(ctk.CTk):
 
             self.after(0, lambda img=full: self._show_preview(img, self.decrypt_preview))
             txt = f"VERIFIED: {len(regions)} region(s) restored\n\n" + "\n".join(info)
-            self.after(0, lambda: self.dec_info_label.configure(text=txt, text_color=C["success"]))
+            self.after(0, lambda: self.dec_info_label.configure(text="", text_color=C["success"]))
+            self.after(0, lambda t=txt: typewriter_text(self.dec_info_label, t, interval=15))
             self._prog(1.0)
-            self._status("✅ RESTORATION COMPLETE", C["success"])
-        except ValueError:
-            self._status("❌ ACCESS DENIED", C["danger"])
-            self.after(0, lambda: self.dec_info_label.configure(
-                text="ACCESS DENIED: Wrong password or corrupt data.", text_color=C["danger"]))
+            self._status("● RESTORATION COMPLETE", C["success"])
+        except ValueError as e:
+            err_msg = str(e)
+            self._status("● ACCESS DENIED", C["danger"])
+            self.after(0, lambda m=err_msg: self.dec_info_label.configure(
+                text=f"ACCESS DENIED: {m}", text_color=C["danger"]))
         except Exception as e:
-            self._status("❌ FAILED", C["danger"])
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self._status("● FAILED", C["danger"])
+            self.after(0, lambda m=err_msg: messagebox.showerror("Error", m))
         finally:
             self._prog(0)

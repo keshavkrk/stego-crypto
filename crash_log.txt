@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "C:\Users\krkes\OneDrive\Documents\Projects\Stego-Crypt\debug_run.py", line 4, in <module>
+    app = StegoApp()
+  File "C:\Users\krkes\OneDrive\Documents\Projects\Stego-Crypt\gui\app.py", line 99, in __init__
+    self._create_tabs()
+    ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\krkes\OneDrive\Documents\Projects\Stego-Crypt\gui\app.py", line 168, in _create_tabs
+    self._build_smart()
+    ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\krkes\OneDrive\Documents\Projects\Stego-Crypt\gui\app.py", line 256, in _build_smart
+    self.smart_dropzone.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\krkes\AppData\Local\Programs\Python\Python313\Lib\tkinter\__init__.py", line 2699, in grid_configure
+    self.tk.call(
+    ~~~~~~~~~~~~^
+          ('grid', 'configure', self._w)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          + self._options(cnf, kw))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: bad argument "600": must be name of window
